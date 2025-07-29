@@ -21,11 +21,20 @@
 uint16_t _readState = Init;
 uint16_t _writeState = Init;
 uint16_t _deviceState = Init;
+uint16_t crcInput[64];
+volatile uint16_t writeFrameHead[9];
 volatile _flags CSM431Bflags;
 volatile _cycleCounts CycleCounts;
 volatile _counts ReadNumberFrameCounts;
 volatile _counts ReadDataFrameCounts;
+volatile _counts WriteFrame1Counts;
+volatile _counts WriteFrame2Counts;
 volatile _data ReceiveData;
+
+void VaribleInit()
+{
+
+}
 
 // CSM431BInit - Initializes the CSM431B sensor
 void CSM431BInit(uint16_t isAlreadyConfigured)
@@ -33,20 +42,34 @@ void CSM431BInit(uint16_t isAlreadyConfigured)
     switch (_deviceState)
     {
     case Init:
-        
+        CSM431Bflags.isDelay100us = _true;
+        CSM431Bflags.isDelay200us = _true;
         break;
     
-    case ReadyToConfigure:
-        if (CSM431Bflags.isCSM431BSeted)
+    case OnReset:
+        RST_SET;
+        if (CSM431Bflags.isDelay100us)
         {
-            // If already set, skip initialization
-            return;
+            _deviceState = OnSetDelay;
+            CSM431Bflags.isDelay200us = _false;
         }
+        break;
+    case OnSetDelay:
+        RST_RESET;
+        if (CSM431Bflags.isDelay200us)
+        {            
+            CSM431Bflags.isCSM431BSeted = _true;
+            _deviceState = ReadyToConfig;
+        }
+        break;
+    case Ready:
         
         break;
     }
+
     ReadNumberFrameCounts.frame2ByteDivideCount = 8;
-    ReadNumberFrameCounts.frame1ByteDivideCount = 15;
+    WriteFrame1Counts.frame2ByteDivideCount = SendFrameLengthCan1 / 2;
+    WriteFrame2Counts.frame2ByteDivideCount = SendFrameLengthCan2 / 2;
     if (isAlreadyConfigured)
     {
         // If already configured, skip initialization
@@ -86,17 +109,30 @@ uint16_t OnRead(uint16_t isNull)
 
 }
 
-uint16_t sendWriteCommand()
-{
 
+void OnConfigure(uint16_t address, uint32_t value)
+{
+    uint16_t sendDataAddress = 0xFF00 + (address & 0xFF);
+    uint16_t crcOutput = 0;
+    crcInput[0] = 0x07;
+    crcInput[1] = 0x02;
+    crcInput[2] = 0xFF;
+    crcInput[3] = address & 0xFF;
+    crcInput[4] = (value & 0xFF000000) >> 24;
+    crcInput[5] = (value & 0x00FF0000) >> 16;
+    crcInput[6] = (value & 0x0000FF00) >> 8;
+    crcInput[7] = (value & 0x000000FF);
+
+    CS_LOW;
+    SPI_transmit16Bits(SPIA_BASE, 0x0702);
+    SPI_transmit16Bits(SPIA_BASE, sendDataAddress);
+    SPI_transmit16Bits(SPIA_BASE, (value & 0xFFFF0000) >> 16);
+    SPI_transmit16Bits(SPIA_BASE, (value & 0xFFFF));
+    crcOutput = Crc16X25(crcInput, 8);
+    CS_HIGH;
 }
 
-void OnWrite()
-{
-    
-}
-
-void ReadEvent()
+void ReceiveEvent()
 {
     uint16_t readyToReadNumber = 0;
     switch (_readState)
@@ -121,7 +157,7 @@ void ReadEvent()
         {
             SendReadCommand(CSM431Bflags.isMosiNull);
             ReadNumberFrameCounts.frame2ByteDivideIndex++;
-        }        
+        }
         break;
 
     case ReadNumberWithNull:
@@ -144,7 +180,6 @@ void ReadEvent()
             {
                 _readState = ReadNumberNotNull;
             }
-
         }
         else
         {
@@ -179,39 +214,124 @@ void ReadEvent()
         break;
 
     case ReadDataWithNull:
-
+        _readState = ReadFree;
         break;
 
-    }    
+    case ReadFree:
+        break;
+    }
     
 }
 
-void WriteEvent()
-{
+void SendEvent(uint16_t *data)
+{    
     switch (_writeState)
     {
     case Init:
         
         break;
 
-    case WriteNumberNotNull:
+    case WriteFrameHeadCan1:
+        writeFrameHead[0] = FrameHead;
+        writeFrameHead[1] = SendFrameLengthCan1 + 2;
+        writeFrameHead[2] = WriteDataOnTransmit;
+        writeFrameHead[3] = SpiToCan1;
+        writeFrameHead[4] = NowFrameType;
+        writeFrameHead[5] = SendFrameIDCan1 & 0xFF;        
+        if (NowFrameType == CanfdStandardFrame)
+        {
+            writeFrameHead[6] = (SendFrameIDCan1 & 0x0700) >> 8;
+            writeFrameHead[7] = writeFrameHead[8] = 0;
+        }
+        else
+        {
+            writeFrameHead[6] = (SendFrameIDCan1 & 0x0000FF00) >> 8;
+            writeFrameHead[7] = (SendFrameIDCan1 & 0x00FF0000) >> 16;
+            writeFrameHead[8] = (SendFrameIDCan1 & 0x1F000000) >> 24;
+        }
+
+        CS_LOW;
+        SPI_transmit16Bits(SPIA_BASE, (writeFrameHead[0] & 0xFF) << 8 | (writeFrameHead[1] & 0xFF));
+        SPI_transmit16Bits(SPIA_BASE, (writeFrameHead[2] & 0xFF) << 8 | (writeFrameHead[3] & 0xFF));
+        SPI_transmit16Bits(SPIA_BASE, (writeFrameHead[4] & 0xFF) << 8 | (writeFrameHead[5] & 0xFF));
+        SPI_transmit16Bits(SPIA_BASE, (writeFrameHead[6] & 0xFF) << 8 | (writeFrameHead[7] & 0xFF));
+        SPI_transmit16Bits(SPIA_BASE, ((writeFrameHead[8] & 0xFF) << 8) | (data[0] & 0xFF));
+        _writeState = WriteFrameDataCan1;
+        break;
+
+    case WriteFrameDataCan1:
+        if (! CSM431Bflags.isWriteFrame1End)
+        {
+            SPI_transmit16Bits(SPIA_BASE, (data[WriteFrame1Counts.frame2ByteDivideIndex + 1] & 0xFF) << 8 | (data[WriteFrame1Counts.frame2ByteDivideIndex + 2] & 0xFF));
+        }
+
+        WriteFrame1Counts.frame2ByteDivideCount++;
+        if (WriteFrame1Counts.frame2ByteDivideIndex >= WriteFrame1Counts.frame2ByteDivideCount)
+        {
+            CS_HIGH;
+            CSM431Bflags.isDelay50us = _false;
+            CSM431Bflags.isWriteFrame1End = _true;
+        }
         
+        if (CSM431Bflags.isWriteFrame1End && CSM431Bflags.isDelay50us)
+        {
+            _writeState = WriteFrameHeadCan2;
+            CSM431Bflags.isWriteFrame1End = _false;
+            WriteFrame1Counts.frame2ByteDivideIndex = 0;
+        }
         break;
 
-    case WriteNumberWithNull:
-        // Code to handle writing number with null
+    case WriteFrameHeadCan2:
+        writeFrameHead[0] = FrameHead;
+        writeFrameHead[1] = SendFrameLengthCan2 + 2;
+        writeFrameHead[2] = WriteDataOnTransmit;
+        writeFrameHead[3] = SpiToCan2;
+        writeFrameHead[4] = NowFrameType;
+        writeFrameHead[5] = SendFrameIDCan2 & 0xFF;
+        if (NowFrameType == CanfdStandardFrame)
+        {
+            writeFrameHead[6] = (SendFrameIDCan2 & 0x0700) >> 8;
+            writeFrameHead[7] = writeFrameHead[8] = 0;
+        }
+        else
+        {
+            writeFrameHead[6] = (SendFrameIDCan2 & 0x0000FF00) >> 8;
+            writeFrameHead[7] = (SendFrameIDCan2 & 0x00FF0000) >> 16;
+            writeFrameHead[8] = (SendFrameIDCan2 & 0x1F000000) >> 24;
+        }
+
+        CS_LOW;
+        SPI_transmit16Bits(SPIA_BASE, (writeFrameHead[0] & 0xFF) << 8 | (writeFrameHead[1] & 0xFF));
+        SPI_transmit16Bits(SPIA_BASE, (writeFrameHead[2] & 0xFF) << 8 | (writeFrameHead[3] & 0xFF));
+        SPI_transmit16Bits(SPIA_BASE, (writeFrameHead[4] & 0xFF) << 8 | (writeFrameHead[5] & 0xFF));
+        SPI_transmit16Bits(SPIA_BASE, (writeFrameHead[6] & 0xFF) << 8 | (writeFrameHead[7] & 0xFF));
+        SPI_transmit16Bits(SPIA_BASE, ((writeFrameHead[8] & 0xFF) << 8) | (data[0] & 0xFF));
+        _writeState = WriteFrameDataCan2;
         break;
 
-    case WriteDataNotNull:
-        // Code to handle writing data not null
+    case WriteFrameDataCan2:
+        if (!CSM431Bflags.isWriteFrame2End)
+        {
+            SPI_transmit16Bits(SPIA_BASE, (data[WriteFrame2Counts.frame2ByteDivideIndex + 1] & 0xFF) << 8 | (data[WriteFrame2Counts.frame2ByteDivideIndex + 2] & 0xFF));
+        }
+
+        WriteFrame2Counts.frame2ByteDivideCount++;
+        if (WriteFrame2Counts.frame2ByteDivideIndex >= WriteFrame2Counts.frame2ByteDivideCount)
+        {
+            CS_HIGH;
+            CSM431Bflags.isDelay50us = _false;
+            CSM431Bflags.isWriteFrame2End = _true;
+        }
+
+        if (CSM431Bflags.isWriteFrame2End && CSM431Bflags.isDelay50us)
+        {
+            _writeState = WriteFree;
+            CSM431Bflags.isWriteFrame2End = _false;
+            WriteFrame2Counts.frame2ByteDivideIndex = 0;
+        }
         break;
 
-    case WriteDataWithNull:
-        // Code to handle writing data with null
-        break;
-
-    default:
-        // Handle unexpected state
+    case WriteFree:
         break;
     }
 }
@@ -269,7 +389,7 @@ void CreateRstHighInterval()
     else
     {
         CycleCounts.cycle200usCount++;
-        if (CycleCounts.cycle200usCount >= 100 / InterruptIntervalUS + 1)
+        if (CycleCounts.cycle200usCount >= 200 / InterruptIntervalUS + 1)
         {
             CSM431Bflags.isDelay200us = _true;
             CycleCounts.cycle200usCount = 0;
@@ -296,4 +416,44 @@ void OnReceiveData(uint16_t* data, uint16_t len)
     CSM431Bflags.isReadyToReceive = _true;
 }
 
+void ReadyToInitCSM431B()
+{
+    CSM431Bflags.isDelay100us = _false;
+    _readState = OnReset;
+}
 
+uint16_t SendCommand()
+{
+    if (_writeState == WriteFree)
+    {
+        _writeState = WriteFrameHeadCan1;
+        WriteFrame1Counts.frame2ByteDivideIndex = 0;
+        WriteFrame2Counts.frame2ByteDivideIndex = 0;
+        return NoError;
+    }
+    else if (_writeState == Init)
+    {
+        return DeviceNotInited;
+    }
+    else
+    {
+        return CommandConflict; 
+    }
+}
+
+uint16_t ReceiveCommand()
+{
+    if (_readState == ReadFree)
+    {
+        _readState = ReadNumberNotNull;
+        return NoError;
+    }
+    else if (_readState == Init)
+    {
+        return DeviceNotInited;
+    }
+    else
+    {
+        return CommandConflict;
+    }
+}

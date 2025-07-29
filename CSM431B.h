@@ -10,21 +10,57 @@
 
 #define Init                    0x00
 
-#define ReadyToConfigure        0x01
+//state- total state
+#define ReadyToConfig           0x01
 #define OnReset                 0x02
-#define OnConfigure             0x03
+#define OnSetDelay              0x03
+#define Ready                   0x04
 
+//state- read state
 #define ReadNumberNotNull       0x11
 #define ReadNumberWithNull      0x12
 #define ReadDataNotNull         0x13
 #define ReadDataWithNull        0x14
+#define ReadFree                0x15
 
-#define WriteNumberNotNull      0x21
-#define WriteNumberWithNull     0x22
-#define WriteDataNotNull        0x23
-#define WriteDataWithNull       0x24
+//state- write state
+#define WriteFrameHeadCan1      0x21
+#define WriteFrameDataCan1      0x22
+#define WriteFrameHeadCan2      0x23
+#define WriteFrameDataCan2      0x24
+#define WriteFree               0x25
 
+//frame field
+#define FrameHead               0xAC
+
+#define ReadRegisterOnConfig    0x01
+#define WriteRegisterOnConfig   0x02
+#define ReadDataOnTransmit      0x03
+#define WriteDataOnTransmit     0x04
+#define ReadAllRegisterOnConfig 0x05
+#define CheckErrorOnTransmit    0x06
+#define ReadLengthOnTransmit    0x07
+
+#define SpiToCan1               0x04
+#define SpiToCan2               0x05
+
+#define CanfdStandardFrame      0x80
+#define CanfdExtendedFrame      0x88
+
+//MCU config
 #define InterruptIntervalUS     40
+#define NowFrameType            CanfdStandardFrame
+#define SendFrameIDCan1         0x120
+#define SendFrameIDCan2         0x121
+#define SendFrameLengthCan1     0x12
+#define SendFrameLengthCan2     0x12
+
+//Error
+#define NoError                 0x00
+#define CommandConflict         0x01
+#define DeviceNotInited         0x02
+
+
 typedef struct
 {
     uint16_t isDelay50us;
@@ -32,7 +68,10 @@ typedef struct
     uint16_t isDelay200us;
     uint16_t isCSM431BSeted;
     uint16_t isMosiNull;
+    uint16_t isBusBusy;
     uint16_t isFrameEnd;
+    uint16_t isWriteFrame1End;
+    uint16_t isWriteFrame2End;
     uint16_t isSendNumberCommandFrame;
     uint16_t isReadyToReceive;
     uint16_t isErrorOccurred;
@@ -45,10 +84,8 @@ typedef struct
     uint16_t frame2ByteDivideCount;
     uint16_t frame2ByteDivideIndex;
     uint16_t frame2ByteNotNullCount;
-    uint16_t frame1ByteDivideCount;
-    uint16_t frame1ByteDivideIndex;
-    uint16_t frame1ByteNotNullCount;
-
+    uint16_t frame2ByteWriteCount;
+    uint16_t frame2ByteWriteIndex;
 }_counts;
 
 typedef struct
@@ -68,14 +105,6 @@ typedef struct
 static uint16_t readNumberCommandFrame[15] = {
     0x00AC, 0x0000, 0x0007, 0x00FF,
     0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
-};
-
-static uint16_t readDataCommandFrame[4] = {
-    0x00AC, 0x0000, 0x0003, 0x00FF
-};
-
-static uint16_t writeCommandFrame[4] = {
-    0x00AC, 0x0000, 0x0007, 0x00FF
 };
 
 static uint16_t crc16X25Table[256] = {
@@ -115,3 +144,5 @@ static uint16_t crc16X25Table[256] = {
 
 void CreateFrameInterval(void);
 void ReadEvent(void);
+uint16_t SendCommand();
+uint16_t ReceiveCommand();
