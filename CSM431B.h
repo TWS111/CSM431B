@@ -3,32 +3,67 @@
 // Copyright (C) GX_WangYifan.
 // All Rights Reserved.
 
-#define DEBUG
+//#define _debug
+#define _release
+#define _noSlaveDebug
+
+#ifdef _release
+#include "device.h"
+#define SPI_CS_GPIO 57U
+#define GPIO_RST    58U
+#define GPIO_CFG    40U
+#endif
+
+#ifdef _debug
+#define SPIA_BASE   0
+#define SPI_CS_GPIO 11
+#define GPIO_RST    0
+#define GPIO_CFG    0
+#endif
 
 #define _false  0
 #define _true   1
 
+#define SPI_DATA_LITTLE_ENDIAN  0U
+#define SPI_DATA_BIG_ENDIAN     1U
+
+#define TxDelay                 0
+
 #define Init                    0x00
 
 //state- total state
-#define ReadyToConfig           0x01
-#define OnReset                 0x02
-#define OnSetDelay              0x03
-#define Ready                   0x04
+#define ReadyToCfgConfig        0x11
+#define CfgConfig               0x12
+#define OnReset                 0x13
+#define OnDelay200msPart1       0x14
+#define WriteConfigFrame        0x15
+#define OnDelay3ms              0x16
+#define WriteFeedbackFrame      0x17
+#define PauseToLoop             0x18
+#define OnCfgReset              0x19
+#define OnDelay200msPart2       0x1A
+#define Ready                   0x1B
+#define Busy                    0x1C
+#define Error                   0x1D
 
 //state- read state
-#define ReadNumberNotNull       0x11
-#define ReadNumberWithNull      0x12
-#define ReadDataNotNull         0x13
-#define ReadDataWithNull        0x14
-#define ReadFree                0x15
+#define ReadNumber              0x21
+#define ReadInterval            0x22
+#define ReadData                0x23
+#define ReadFree                0x2A
 
 //state- write state
-#define WriteFrameHeadCan1      0x21
-#define WriteFrameDataCan1      0x22
-#define WriteFrameHeadCan2      0x23
-#define WriteFrameDataCan2      0x24
-#define WriteFree               0x25
+#define WriteFrameHeadCan1      0x31
+#define WriteFrameDataCan1      0x32
+#define WriteFrameHeadCan2      0x33
+#define WriteFrameDataCan2      0x34
+#define WriteFree               0x3A
+
+//state error feedback state
+#define ErrorReadCommand        0x41
+#define ErrorFrameInterval      0x42
+#define ErrorReadFeedback       0x43
+#define ErrorReadFree           0x4A
 
 //frame field
 #define FrameHead               0xAC
@@ -44,67 +79,155 @@
 #define SpiToCan1               0x04
 #define SpiToCan2               0x05
 
+//MCU config
+#define InterruptIntervalUS     40
+#define NowFrameType            CanfdExtendedFrame
+#define SendFrameIDCan1         0x1502000
+#define SendFrameIDCan2         0x121
+#define ReceiveFrameIDCan1      0xA082000
+#define SendFrameLengthCan      0x20
+#define ReceiveFrameLengthCan   0x40
+
+//Users Error
+#define NoError                 0x60
+#define CommandConflict         0x61
+#define DeviceNotInited         0x62
+#define Timeout                 0x63
+#define FrameHeadError          0x64
+#define ChannelError            0x65
+#define ErrorOccurred           0x66
+#define CommandDelayed          0x67
+
+//CSM431B ErrorCode
+#define ConfigNoError           0x70
+#define RegisterAddressError    0x71
+#define RegisterValueError      0x72
+#define CrcCheckError           0x73
+#define LengthError             0x74
+#define CommandError            0x75
+
 #define CanfdStandardFrame      0x80
 #define CanfdExtendedFrame      0x88
 
-//MCU config
-#define InterruptIntervalUS     40
-#define NowFrameType            CanfdStandardFrame
-#define SendFrameIDCan1         0x120
-#define SendFrameIDCan2         0x121
-#define SendFrameLengthCan1     0x12
-#define SendFrameLengthCan2     0x12
-
-//Error
-#define NoError                 0x00
-#define CommandConflict         0x01
-#define DeviceNotInited         0x02
+//CSM431B config
+#define RegisterConfigLength    11
+#define TimeoutCount            10
 
 
 typedef struct
 {
     uint16_t isDelay50us;
+    uint16_t isDelay50usForRead;
     uint16_t isDelay100us;
     uint16_t isDelay200us;
+    uint16_t isDelay1ms;
+    uint16_t isDelay3ms;
+    uint16_t isDelay200ms;
     uint16_t isCSM431BSeted;
     uint16_t isMosiNull;
     uint16_t isBusBusy;
     uint16_t isFrameEnd;
+    uint16_t isReceiveCommandOn;
+    uint16_t isSendCommandOn;
+    uint16_t isCheckErrorCommandOn;
     uint16_t isWriteFrame1End;
     uint16_t isWriteFrame2End;
     uint16_t isSendNumberCommandFrame;
     uint16_t isReadyToReceive;
     uint16_t isErrorOccurred;
+    uint16_t isInitTimeout;
     uint16_t isConfigured;
-
+    uint16_t isIntSet;
+    uint16_t isChannelSwitchedin100ms;
+    uint16_t isChannelSwitched;
 }_flags;
 
 typedef struct
 {
     uint16_t frame2ByteDivideCount;
     uint16_t frame2ByteDivideIndex;
-    uint16_t frame2ByteNotNullCount;
     uint16_t frame2ByteWriteCount;
     uint16_t frame2ByteWriteIndex;
+    uint16_t frameCountIndex;
 }_counts;
 
 typedef struct
 {
     uint16_t cycle50usCount;
+    uint16_t cycle50usForReadCount;
     uint16_t cycle100usCount;
     uint16_t cycle200usCount;
+    uint16_t cycle1msCount;
+    uint16_t cycle3msCount;
+    uint16_t cycle100msCount;
+    uint16_t cycle200msCount;
+    uint16_t cycleTimeoutCount;
 }_cycleCounts;
 
 typedef struct
 {
-    uint16_t recviveNumberFrameData[128];
-    uint16_t receviveFrameNumber;
-    uint16_t receiveDataFrameData[128];
+    uint16_t receiveNumberFrameData[32];
+    uint16_t receiveFrameNumber;
+    uint16_t receiveDataFrameData[130];
 }_data;
 
+typedef struct
+{
+    uint16_t receiveFrameNumber;
+    uint16_t receiveDataFrameData[16];
+}_errorData;
+
+typedef struct
+{
+    uint16_t receiveIDCan;
+    uint16_t receiveDataCan[64];
+}_rxCanData;
+
+typedef struct
+{
+    uint16_t frameLengthFaultCount;
+    uint16_t channelFaultCount;
+    uint16_t crcFaultCount;
+    uint16_t frameTypeFaultCount;
+    uint16_t frameIDFaultCount;
+}_serialFault;
+
+typedef struct
+{
+    uint16_t receiveFaultCount;
+    uint16_t sendFaultCount;
+    uint16_t negitiveFaultCount;
+    uint16_t busoffFaultCount;
+}_canFault;
+
+static uint32_t configIndex[RegisterConfigLength] = {
+    0x0000, 0x0001, 0x0004, 0x0005, 0x0006, 0x001C, 0x001D, 0x001E, 0x001F, 0x0020, 0x0021
+
+};
+
+static uint32_t configFrameHead[4] = {
+    0x00AC, 0x0007, 0x0002, 0x00FF
+};
+
+static uint16_t errorFeedbackFrameHead[2] = {
+    0xAC00, 0x06FF
+};
+
+static uint32_t valueOnConfig[RegisterConfigLength * 2] = {
+    0x0000, 0x0000, //0x00
+    0x0500, 0x0000, //0x01
+    0x0000, 0x0000, //0x04
+    0x0A05, 0x1500, //0x05 
+    0x0A05, 0x1500, //0x06
+    0x0000, 0x0000, //0x1C
+    0x4D00, 0x4D00, //0x1D
+    0x1200, 0x1200, //0x1E
+    0x0000, 0x0000, //0x1F
+    0x1200, 0x1200, //0x20
+    0x0400, 0x0400, //0x21
+};
 static uint16_t readNumberCommandFrame[15] = {
     0x00AC, 0x0000, 0x0007, 0x00FF,
-    0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
 };
 
 static uint16_t crc16X25Table[256] = {
@@ -143,6 +266,23 @@ static uint16_t crc16X25Table[256] = {
 };
 
 void CreateFrameInterval(void);
-void ReadEvent(void);
+void TimeInterval(void);
+void SendEvent(uint16_t *data);
+void ReceiveEvent(void);
+void CheckErrorFeedbackEvent(void);
+void CSM431BDeviceEvent(void);
 uint16_t SendCommand();
-uint16_t ReceiveCommand();
+uint16_t ReceiveCommand(void);
+uint16_t CheckErrorFeedbackCommand(void);
+uint16_t InitCommand(void);
+uint16_t* GetReceiveData();
+void TimeInterval(void);
+uint16_t CheckIfCsm431BReady(void);
+uint16_t CheckIfError(void);
+void ReceiveDecode(void);
+uint16_t IntSet(void);
+void IdelEvent(uint16_t sendData);
+void AllLow();
+void AllHigh();
+void TestInt();
+void TestIntL();
