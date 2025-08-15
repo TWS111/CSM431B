@@ -29,7 +29,7 @@
 
 #define TxDelay                 0
 
-#define Init                    0x00
+#define _Init                   0x00
 
 //state- total state
 #define ReadyToCfgConfig        0x11
@@ -42,14 +42,15 @@
 #define PauseToLoop             0x18
 #define OnCfgReset              0x19
 #define OnDelay200msPart2       0x1A
-#define Ready                   0x1B
-#define Busy                    0x1C
+#define _Ready                  0x1B
+#define _Busy                   0x1C
 #define Error                   0x1D
 
 //state- read state
 #define ReadNumber              0x21
 #define ReadInterval            0x22
 #define ReadData                0x23
+#define ReadOverInterval        0x24
 #define ReadFree                0x2A
 
 //state- write state
@@ -57,6 +58,7 @@
 #define WriteFrameDataCan1      0x32
 #define WriteFrameHeadCan2      0x33
 #define WriteFrameDataCan2      0x34
+#define WriteOverInterval       0x35
 #define WriteFree               0x3A
 
 //state error feedback state
@@ -110,13 +112,14 @@
 #define CanfdExtendedFrame      0x88
 
 //CSM431B config
-#define RegisterConfigLength    11
+#define RegisterConfigLength    12
 #define TimeoutCount            10
 
 
 typedef struct
 {
     uint16_t isDelay50us;
+    uint16_t isDelay50usForWrite;
     uint16_t isDelay50usForRead;
     uint16_t isDelay100us;
     uint16_t isDelay200us;
@@ -155,6 +158,7 @@ typedef struct
 {
     uint16_t cycle50usCount;
     uint16_t cycle50usForReadCount;
+    uint16_t cycle50usForWriteCount;
     uint16_t cycle100usCount;
     uint16_t cycle200usCount;
     uint16_t cycle1msCount;
@@ -166,7 +170,7 @@ typedef struct
 
 typedef struct
 {
-    uint16_t receiveNumberFrameData[32];
+    uint16_t receiveNumberFrameData[35];
     uint16_t receiveFrameNumber;
     uint16_t receiveDataFrameData[130];
 }_data;
@@ -174,7 +178,7 @@ typedef struct
 typedef struct
 {
     uint16_t receiveFrameNumber;
-    uint16_t receiveDataFrameData[16];
+    uint16_t receiveDataFrameData[20];
 }_errorData;
 
 typedef struct
@@ -201,7 +205,7 @@ typedef struct
 }_canFault;
 
 static uint32_t configIndex[RegisterConfigLength] = {
-    0x0000, 0x0001, 0x0004, 0x0005, 0x0006, 0x001C, 0x001D, 0x001E, 0x001F, 0x0020, 0x0021
+    0x0000, 0x0001, 0x0004, 0x0005, 0x0006, 0x001B, 0x001C, 0x001D, 0x001E, 0x001F, 0x0020, 0x0021
 
 };
 
@@ -209,22 +213,19 @@ static uint32_t configFrameHead[4] = {
     0x00AC, 0x0007, 0x0002, 0x00FF
 };
 
-static uint16_t errorFeedbackFrameHead[2] = {
-    0xAC00, 0x06FF
-};
-
 static uint32_t valueOnConfig[RegisterConfigLength * 2] = {
     0x0000, 0x0000, //0x00
     0x0500, 0x0000, //0x01
     0x0000, 0x0000, //0x04
-    0x0A05, 0x1500, //0x05 
-    0x0A05, 0x1500, //0x06
-    0x0000, 0x0000, //0x1C
-    0x4D00, 0x4D00, //0x1D
-    0x1200, 0x1200, //0x1E
-    0x0000, 0x0000, //0x1F
-    0x1200, 0x1200, //0x20
-    0x0400, 0x0400, //0x21
+    0x0A05, 0x3500, //0x05 
+    0x0A05, 0x3500, //0x06
+    0x0000, 0x0000, //0x1B
+    0x0100, 0x0100, //0x1C
+    0x5500, 0x5500, //0x1D
+    0x0F00, 0x0F00, //0x1E
+    0x0100, 0x0100, //0x1F
+    0x1400, 0x1400, //0x20
+    0x0500, 0x0500, //0x21
 };
 static uint16_t readNumberCommandFrame[15] = {
     0x00AC, 0x0000, 0x0007, 0x00FF,

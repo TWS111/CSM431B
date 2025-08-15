@@ -30,11 +30,12 @@
 
 uint16_t cycleNumber;
 uint16_t XintDivide;
+uint16_t debugCount;
 uint16_t errorCode = NoError;
-uint16_t _readState = Init;
-uint16_t _writeState = Init;
-uint16_t _deviceState = Init;
-uint16_t _errorFeedbackState = Init;
+uint16_t _readState = _Init;
+uint16_t _writeState = _Init;
+uint16_t _deviceState = _Init;
+uint16_t _errorFeedbackState = _Init;
 uint16_t canChannel = SpiToCan1;
 uint16_t nackNumber;
 uint16_t crcInput[64];
@@ -61,11 +62,6 @@ uint16_t Crc16X25(const uint16_t* data, uint16_t len);
 uint16_t C1188A(uint16_t* data, uint16_t len);
 void SendEvent();
 void ReceiveEvent();
-
-void VaribleInit()
-{
-
-}
 
 void SendConfigFrame()
 {
@@ -142,14 +138,14 @@ void  SendFeedbackFrame()
     // {
     //     CycleCounts.cycleTimeoutCount++;
     //     ConfigFrameCounts.frameCountIndex--;
-    //     _deviceState = Ready;
+    //     _deviceState = _Ready;
     // }
    
 }
 
 uint16_t SendReadCommand(uint16_t isNull)
 {
-    uint16_t _readyToReadNumber = 0;
+    uint16_t ReadyToReadNumber = 0;
     uint16_t sendData;
     if (CSM431Bflags.isDelay50us && !CSM431Bflags.isSendNumberCommandFrame)
     {
@@ -166,10 +162,10 @@ uint16_t SendReadCommand(uint16_t isNull)
         }
 
         CSM431Bflags.isSendNumberCommandFrame = _true;
-        _readyToReadNumber = FeedbackSendReadFrame[7];
+        ReadyToReadNumber = FeedbackSendReadFrame[7];
 
     }
-    return _readyToReadNumber;
+    return ReadyToReadNumber;
 }
 
 void OnRead(uint16_t isNull)
@@ -246,7 +242,12 @@ void ReceiveDecode()
 
 void OnErrorJudge(uint16_t* data)
 {
-//#pragma region FaultCount
+    //#pragma region FaultCount
+    if (data[0] != 0xAC0E && data[1] != 0x06FF) 
+    {
+        return;
+    }
+    
     SPIFaultCount.frameLengthFaultCount = (data[2] & 0xFF00) >> 8;
     SPIFaultCount.channelFaultCount = data[2] & 0xFF;
     SPIFaultCount.crcFaultCount = data[3];
@@ -268,7 +269,7 @@ void OnErrorJudge(uint16_t* data)
         CanFD2FaultCount.sendFaultCount > 0 || CanFD2FaultCount.negitiveFaultCount > 0 ||
         CanFD2FaultCount.busoffFaultCount > 0)
     {
-        if (!CSM431Bflags.isChannelSwitchedin100ms && (_deviceState == Ready || _deviceState == Busy || _deviceState == Error))
+        if (!CSM431Bflags.isChannelSwitchedin100ms && (_deviceState == _Ready || _deviceState == _Busy || _deviceState == Error))
         {
             _deviceState = Error;
             return;
@@ -325,7 +326,7 @@ void CSM431BDeviceEvent()
 {
     switch (_deviceState)
     {
-    case Init:
+    case _Init:
         CSM431Bflags.isDelay50us = _true;
         CSM431Bflags.isDelay100us = _true;
         CSM431Bflags.isDelay200ms = _true;
@@ -433,36 +434,39 @@ void CSM431BDeviceEvent()
             _writeState = WriteFree;
             _readState = ReadFree;
             _errorFeedbackState = ErrorReadFree;
-            _deviceState = Ready;
+            _deviceState = _Ready;
         }
 
         break;
 
-    case Busy:
+    case _Busy:
         break;
 
-    case Ready:        
-        if (CSM431Bflags.isReceiveCommandOn)
+    case _Ready:        
+        if (CSM431Bflags.isReceiveCommandOn && _readState == ReadFree)
         {
-            _deviceState = Busy;
+            _deviceState = _Busy;
             CSM431Bflags.isReceiveCommandOn = _false;
             _readState = ReadNumber;
-            ReceiveEvent();
+            ReadNumberFrameCounts.frame2ByteDivideIndex = 0;
+            ReadDataFrameCounts.frame2ByteDivideIndex = 0;
+            //ReceiveEvent();
             break;
         }
-        else if (CSM431Bflags.isCheckErrorCommandOn)
+        // else if (CSM431Bflags.isCheckErrorCommandOn)
+        // {
+        //     _deviceState = _Busy;
+        //     CSM431Bflags.isCheckErrorCommandOn = _false;
+        //     _errorFeedbackState = ErrorReadCommand;
+        //     break;
+        //     //CheckErrorFeedbackEvent();
+        // }
+        else if (CSM431Bflags.isSendCommandOn && _writeState == WriteFree)
         {
-            _deviceState = Busy;
-            CSM431Bflags.isCheckErrorCommandOn = _false;
-            _errorFeedbackState = ErrorReadCommand;
-            break;
-            //CheckErrorFeedbackEvent();
-        }
-        else if (CSM431Bflags.isSendCommandOn)
-        {
-            _deviceState = Busy;
+            _deviceState = _Busy;
             CSM431Bflags.isSendCommandOn = _false;
-            _writeState = canChannel == SpiToCan1 ? WriteFrameHeadCan1 : WriteFrameHeadCan2;
+            _writeState = WriteFrameHeadCan1;
+            ReadDataFrameCounts.frame2ByteDivideIndex = 0;
             break;
             //SendEvent();
         }
@@ -483,18 +487,17 @@ void CSM431BDeviceEvent()
 void ReceiveEvent()
 {
     uint16_t tempRead;
-    uint16_t readyToReadNumber = 0;
+    uint16_t ReadyToReadNumber = 0;
 
     switch (_readState)
     {
-    case Init:
+    case _Init:
         break;
 
     case ReadNumber:
-        if (_deviceState == Ready)
-        {
-            _deviceState = Busy;
-        }
+        
+        _deviceState = _Busy;
+        
         if (ReadNumberFrameCounts.frame2ByteDivideIndex == 0)
         {
             CS_LOW;
@@ -533,12 +536,13 @@ void ReceiveEvent()
         }        break;
 
     case ReadInterval:
+        _deviceState = _Busy;
         if (CSM431Bflags.isDelay50usForRead)
-        {
-            _readState = ReadData;
+        {            
             CS_LOW;
             SPI_transmit16Bits(SPIA_BASE, 0xAC00);
             SPI_transmit16Bits(SPIA_BASE, 0x03FF);
+            _readState = ReadData;
         }
         
         break;
@@ -554,7 +558,7 @@ void ReceiveEvent()
     //         if (ReceiveData.receviveFrameNumber != 0)
     //         {
     //             _readState = ReadDataNotNull;
-    //             ReadDataFrameCounts.frame2ByteDivideCount = readyToReadNumber / 2 + (readyToReadNumber % 2 == 1 ? 1 : 0);
+    //             ReadDataFrameCounts.frame2ByteDivideCount = ReadyToReadNumber / 2 + (ReadyToReadNumber % 2 == 1 ? 1 : 0);
     //         }
     //         else
     //         {
@@ -567,32 +571,31 @@ void ReceiveEvent()
     //     }
     //     break;
 
-        /******************************************************************/
     case ReadData:
-
-        if (ReadDataFrameCounts.frame2ByteDivideIndex >= ReadDataFrameCounts.frame2ByteDivideCount)
-        {
-            CS_HIGH;
-            ReadDataFrameCounts.frame2ByteDivideIndex = 0;
-            _readState = ReadFree;
-            _deviceState = Ready;
-            cycleNumber = 0;
-            ReceiveDecode();
-            break;
-        }
+        _deviceState = _Busy;
+        // if (ReadDataFrameCounts.frame2ByteDivideIndex >= ReadDataFrameCounts.frame2ByteDivideCount)
+        // {
+        //     CS_HIGH;
+        //     ReadDataFrameCounts.frame2ByteDivideIndex = 0;
+        //     CSM431Bflags.isDelay50usForRead = _false;
+        //     _readState = ReadOverInterval;
+        //     cycleNumber = 0;
+        //     ReceiveDecode();
+        //     break;
+        // }
         
-        tempRead = SPI_receive16Bits(SPIA_BASE, SPI_DATA_BIG_ENDIAN, 0, TxDelay);        
+        // tempRead = SPI_receive16Bits(SPIA_BASE, SPI_DATA_BIG_ENDIAN, 0, TxDelay);        
         
-        ReceiveData.receiveDataFrameData[2 * ReadDataFrameCounts.frame2ByteDivideIndex] = (tempRead & 0xFF00) >> 8;
-        ReceiveData.receiveDataFrameData[2 * ReadDataFrameCounts.frame2ByteDivideIndex + 1] = tempRead & 0xFF;
-        ReadDataFrameCounts.frame2ByteDivideIndex++;
+        // ReceiveData.receiveDataFrameData[2 * ReadDataFrameCounts.frame2ByteDivideIndex] = (tempRead & 0xFF00) >> 8;
+        // ReceiveData.receiveDataFrameData[2 * ReadDataFrameCounts.frame2ByteDivideIndex + 1] = tempRead & 0xFF;
+        // ReadDataFrameCounts.frame2ByteDivideIndex++;
 
         if (ReadDataFrameCounts.frame2ByteDivideIndex >= ReadDataFrameCounts.frame2ByteDivideCount)
                 {
                     CS_HIGH;
                     ReadDataFrameCounts.frame2ByteDivideIndex = 0;
-                    _readState = ReadFree;
-                    _deviceState = Ready;
+                    CSM431Bflags.isDelay50usForRead = _false;
+                    _readState = ReadOverInterval;
                     cycleNumber = 0;
                     ReceiveDecode();
                     break;
@@ -606,22 +609,19 @@ void ReceiveEvent()
 
         break;
 
-    // case ReadDataWithNull:
-    //     if (ReadDataFrameCounts.frame2ByteDivideIndex >= ReadDataFrameCounts.frame2ByteDivideCount)
-    //     {
-    //         cycleNumber = 0;
-    //         ReadDataFrameCounts.frame2ByteDivideIndex = 0;
-    //         ReceiveDecode(cycleNumber);
-    //         _readState = ReadFree;
-    //         _deviceState = Ready;
-    //     }
-    //     CSM431Bflags.isMosiNull = _true;
-    //     OnRead(CSM431Bflags.isMosiNull);
-    //     ReadDataFrameCounts.frame2ByteDivideIndex++;
+    case ReadOverInterval:
+        _deviceState = _Busy;
+        if (CSM431Bflags.isDelay50usForRead)
+        {
+            _readState = ReadFree;
+            _deviceState = _Ready;
+        }       
         
-    //     break;
+        break;
 
     case ReadFree:
+        ReadDataFrameCounts.frame2ByteDivideIndex = 0;
+        ReadNumberFrameCounts.frame2ByteDivideIndex = 0;
         break;
     }
     
@@ -631,18 +631,17 @@ void SendEvent(uint16_t *data)
 {
     switch (_writeState)
     {
-    case Init:        
+    case _Init:
         break;
 
     case WriteFrameHeadCan1:
-        if (_deviceState == Ready)
-        {
-            _deviceState = Busy;
-        }
+        
+        _deviceState = _Busy;
+        
         writeFrameHead[0] = FrameHead;
         writeFrameHead[1] = SendFrameLengthCan + 5;
         writeFrameHead[2] = WriteDataOnTransmit;
-        writeFrameHead[3] = SpiToCan1;
+        writeFrameHead[3] = canChannel;
         writeFrameHead[4] = NowFrameType;
         writeFrameHead[5] = SendFrameIDCan1 & 0xFF;        
         if (NowFrameType == CanfdStandardFrame)
@@ -657,21 +656,22 @@ void SendEvent(uint16_t *data)
             writeFrameHead[8] = (SendFrameIDCan1 & 0x1F000000) >> 24;
         }
 
-        CS_LOW;
-        SPI_transmit16Bits(SPIA_BASE,
-            (writeFrameHead[0] & 0xFF) << 8 | (writeFrameHead[1] & 0xFF));
-        SPI_transmit16Bits(SPIA_BASE,
-            (writeFrameHead[2] & 0xFF) << 8 | (writeFrameHead[3] & 0xFF));
-        SPI_transmit16Bits(SPIA_BASE,
-            (writeFrameHead[4] & 0xFF) << 8 | (writeFrameHead[5] & 0xFF));
-        SPI_transmit16Bits(SPIA_BASE,
-            (writeFrameHead[6] & 0xFF) << 8 | (writeFrameHead[7] & 0xFF));
-        SPI_transmit16Bits(SPIA_BASE,
-            ((writeFrameHead[8] & 0xFF) << 8) | (data[0] & 0xFF));
-        _writeState = WriteFrameDataCan1;
-        break;
+        if (WriteFrame1Counts.frame2ByteDivideIndex == 0)
+        {
+            CS_LOW;
+            SPI_transmit16Bits(SPIA_BASE,
+                (writeFrameHead[0] & 0xFF) << 8 | (writeFrameHead[1] & 0xFF));
+            SPI_transmit16Bits(SPIA_BASE,
+                (writeFrameHead[2] & 0xFF) << 8 | (writeFrameHead[3] & 0xFF));
+            SPI_transmit16Bits(SPIA_BASE,
+                (writeFrameHead[4] & 0xFF) << 8 | (writeFrameHead[5] & 0xFF));
+            SPI_transmit16Bits(SPIA_BASE,
+                (writeFrameHead[6] & 0xFF) << 8 | (writeFrameHead[7] & 0xFF));
+            SPI_transmit16Bits(SPIA_BASE,
+                ((writeFrameHead[8] & 0xFF) << 8) | (data[0] & 0xFF));
+        }
+        
 
-    case WriteFrameDataCan1:
         if (WriteFrame1Counts.frame2ByteDivideIndex == WriteFrame1Counts.frame2ByteDivideCount - 2)
         {
             SPI_transmit24Bits(SPIA_BASE,
@@ -682,136 +682,60 @@ void SendEvent(uint16_t *data)
         }
 
         WriteFrame1Counts.frame2ByteDivideIndex++;
+        if (WriteFrame1Counts.frame2ByteDivideCount < 3)
+        {
+            debugCount++;
+        }
+        
         if (WriteFrame1Counts.frame2ByteDivideIndex > WriteFrame1Counts.frame2ByteDivideCount - 2)
         {
             CS_HIGH;
-            CSM431Bflags.isDelay50us = _false;
+            
+            CSM431Bflags.isDelay50usForWrite = _false;
             CSM431Bflags.isWriteFrame1End = _true;
+            _writeState = WriteOverInterval;
+        }
+                
+        SPI_transmit16Bits(SPIA_BASE, (data[WriteFrame1Counts.frame2ByteDivideIndex + 1] & 0xFF) << 8 | ((data[WriteFrame1Counts.frame2ByteDivideIndex + 2] & 0xFF00) >> 8));        
+        
+        break;    
+
+    case WriteOverInterval:
+        if (CSM431Bflags.isDelay50usForWrite)
+        {
+            if (XintDivide >= 2)
+            {
+                CSM431Bflags.isWriteFrame1End = _false;
+                WriteFrame2Counts.frame2ByteDivideIndex = 0;
+                _writeState = ErrorReadCommand;
+            }
+            else
+            {
+                CSM431Bflags.isWriteFrame1End = _false;
+                WriteFrame2Counts.frame2ByteDivideIndex = 0;
+                _writeState = WriteFree;
+                _deviceState = _Ready;
+            }
         }
         
-        if (!CSM431Bflags.isWriteFrame1End)
-        {
-            SPI_transmit16Bits(SPIA_BASE, (data[WriteFrame1Counts.frame2ByteDivideIndex + 1] & 0xFF) << 8 | ((data[WriteFrame1Counts.frame2ByteDivideIndex + 2] & 0xFF00) >> 8));
-        }
-
-        if (CSM431Bflags.isWriteFrame1End && CSM431Bflags.isDelay50us)
-        {
-            if (XintDivide >= 2)
-            {
-                _writeState = ErrorReadCommand;
-            }
-            else
-            {
-                _writeState = WriteFree;
-                _deviceState = Ready;
-            }
-
-            CSM431Bflags.isWriteFrame1End = _false;
-            WriteFrame2Counts.frame2ByteDivideIndex = 0;
-            break;
-        }
-
-        break;
-
-    case WriteFrameHeadCan2:
-        if (_deviceState == Ready)
-        {
-            _deviceState = Busy;
-        }
-        writeFrameHead[0] = FrameHead;
-        writeFrameHead[1] = SendFrameLengthCan + 5;
-        writeFrameHead[2] = WriteDataOnTransmit;
-        writeFrameHead[3] = SpiToCan2;
-        writeFrameHead[4] = NowFrameType;
-        writeFrameHead[5] = SendFrameIDCan1 & 0xFF;
-        if (NowFrameType == CanfdStandardFrame)
-        {
-            writeFrameHead[6] = (SendFrameIDCan1 & 0x0700) >> 8;
-            writeFrameHead[7] = writeFrameHead[8] = 0;
-        }
-        else
-        {
-            writeFrameHead[6] = (SendFrameIDCan1 & 0x0000FF00) >> 8;
-            writeFrameHead[7] = (SendFrameIDCan1 & 0x00FF0000) >> 16;
-            writeFrameHead[8] = (SendFrameIDCan1 & 0x1F000000) >> 24;
-        }
-
-        CS_LOW;
-        SPI_transmit16Bits(SPIA_BASE,
-            (writeFrameHead[0] & 0xFF) << 8 | (writeFrameHead[1] & 0xFF));
-        SPI_transmit16Bits(SPIA_BASE,
-            (writeFrameHead[2] & 0xFF) << 8 | (writeFrameHead[3] & 0xFF));
-        SPI_transmit16Bits(SPIA_BASE,
-            (writeFrameHead[4] & 0xFF) << 8 | (writeFrameHead[5] & 0xFF));
-        SPI_transmit16Bits(SPIA_BASE,
-            (writeFrameHead[6] & 0xFF) << 8 | (writeFrameHead[7] & 0xFF));
-        SPI_transmit16Bits(SPIA_BASE,
-            ((writeFrameHead[8] & 0xFF) << 8) | (data[0] & 0xFF));
-        _writeState = WriteFrameDataCan2;
-        break;
-
-    case WriteFrameDataCan2:
-        if (WriteFrame2Counts.frame2ByteDivideIndex == WriteFrame2Counts.frame2ByteDivideCount - 2)
-        {
-            SPI_transmit24Bits(SPIA_BASE,
-                ((data[WriteFrame2Counts.frame2ByteDivideIndex + 1] & 0xFF) << 16)
-                | (data[WriteFrame2Counts.frame2ByteDivideIndex + 2] & 0xFF00)
-                | (data[WriteFrame2Counts.frame2ByteDivideIndex + 2] & 0xFF)
-                , 0);
-        }
-
-        WriteFrame2Counts.frame2ByteDivideIndex++;
-        if (WriteFrame2Counts.frame2ByteDivideIndex > WriteFrame2Counts.frame2ByteDivideCount - 2)
-        {
-            CS_HIGH;
-            CSM431Bflags.isDelay50us = _false;
-            CSM431Bflags.isWriteFrame1End = _true;
-        }
-
-
-        if (!CSM431Bflags.isWriteFrame1End)
-        {
-            SPI_transmit16Bits(SPIA_BASE, (data[WriteFrame2Counts.frame2ByteDivideIndex + 1] & 0xFF) << 8 | ((data[WriteFrame2Counts.frame2ByteDivideIndex + 2] & 0xFF00) >> 8));
-        }
-
-        if (CSM431Bflags.isWriteFrame1End && CSM431Bflags.isDelay50us)
-        {
-            if (XintDivide >= 2)
-            {
-                _writeState = ErrorReadCommand;
-            }
-            else
-            {
-                _writeState = WriteFree;
-                _deviceState = Ready;
-            }
-             
-            CSM431Bflags.isWriteFrame1End = _false;
-            WriteFrame2Counts.frame2ByteDivideIndex = 0;
-            break;
-        }
         break;
 
     case ErrorReadCommand:
-        if (_deviceState == Ready)
-        {
-            _deviceState = Busy;
-        }
+        _deviceState = _Busy;        
 
         CS_LOW;
-        SPI_transmit16Bits(SPIA_BASE, errorFeedbackFrameHead[0]);
-        SPI_transmit16Bits(SPIA_BASE, errorFeedbackFrameHead[1]);
+        SPI_transmit16Bits(SPIA_BASE, 0xAC00);
+        SPI_transmit16Bits(SPIA_BASE, 0x06FF);
         _writeState = ErrorReadFeedback;
         break;
 
     case ErrorReadFeedback:
         if (ErrorFeedabckFrameCounts.frame2ByteDivideIndex > ErrorFeedabckFrameCounts.frame2ByteDivideCount)
         {
-            CS_HIGH;
-            OnErrorJudge(ErrorFeedbackData.receiveDataFrameData);
+            CS_HIGH;            
             _writeState = WriteFree;
             ErrorFeedabckFrameCounts.frame2ByteDivideIndex = 0;
-            _deviceState = Ready;
+            _deviceState = _Ready;
             break;
         }
 
@@ -826,41 +750,41 @@ void SendEvent(uint16_t *data)
 
 void CheckErrorFeedbackEvent()
 {
-    switch (_errorFeedbackState)
-    {
-    case Init:
-        break;
+    // switch (_errorFeedbackState)
+    // {
+    // case _Init:
+    //     break;
     
-    case ErrorReadCommand:
-        if (_deviceState == Ready)
-        {
-            _deviceState = Busy;
-        }
+    // case ErrorReadCommand:
+    //     if (_deviceState == _Ready)
+    //     {
+    //         _deviceState = _Busy;
+    //     }
 
-        CS_LOW;
-        SPI_transmit16Bits(SPIA_BASE, errorFeedbackFrameHead[0]);
-        SPI_transmit16Bits(SPIA_BASE, errorFeedbackFrameHead[1]);
-        _errorFeedbackState = ErrorReadFeedback;
-        break;
+    //     CS_LOW;
+    //     SPI_transmit16Bits(SPIA_BASE, 0xAC00);
+    //     SPI_transmit16Bits(SPIA_BASE, 0x06FF);
+    //     _errorFeedbackState = ErrorReadFeedback;
+    //     break;
 
-    case ErrorReadFeedback:
-        if (ErrorFeedabckFrameCounts.frame2ByteDivideIndex > ErrorFeedabckFrameCounts.frame2ByteDivideCount)
-        {
-            CS_HIGH;
-            OnErrorJudge(ErrorFeedbackData.receiveDataFrameData);
-            _errorFeedbackState = ErrorReadFree;
-            ErrorFeedabckFrameCounts.frame2ByteDivideIndex = 0;
-            _deviceState = Ready;
-            break;
-        }
+    // case ErrorReadFeedback:
+    //     if (ErrorFeedabckFrameCounts.frame2ByteDivideIndex > ErrorFeedabckFrameCounts.frame2ByteDivideCount)
+    //     {
+    //         CS_HIGH;
+    //         OnErrorJudge(ErrorFeedbackData.receiveDataFrameData);
+    //         _errorFeedbackState = ErrorReadFree;
+    //         ErrorFeedabckFrameCounts.frame2ByteDivideIndex = 0;
+    //         _deviceState = _Ready;
+    //         break;
+    //     }
         
-        ErrorFeedbackData.receiveDataFrameData[ErrorFeedabckFrameCounts.frame2ByteDivideIndex] = SPI_receive16Bits(SPIA_BASE, SPI_DATA_BIG_ENDIAN, 0, TxDelay);
-        ErrorFeedabckFrameCounts.frame2ByteDivideIndex++;
-        break;
+    //     ErrorFeedbackData.receiveDataFrameData[ErrorFeedabckFrameCounts.frame2ByteDivideIndex] = SPI_receive16Bits(SPIA_BASE, SPI_DATA_BIG_ENDIAN, 0, TxDelay);
+    //     ErrorFeedabckFrameCounts.frame2ByteDivideIndex++;
+    //     break;
 
-    case ErrorReadFree:
-        break;
-    }
+    // case ErrorReadFree:
+    //     break;
+    // }
 }
 
 //50us at least interval
@@ -895,10 +819,30 @@ void CreateReadInterval()
     else
     {
         CycleCounts.cycle50usForReadCount++;
-        if (CycleCounts.cycle50usForReadCount >= 50 / InterruptIntervalUS + 1)
+        if (CycleCounts.cycle50usForReadCount >= 210 / InterruptIntervalUS + 1)
         {
             CSM431Bflags.isDelay50usForRead = _true;
             CycleCounts.cycle50usForReadCount = 0;
+        }
+
+        return;
+    }
+}
+
+void CreateWriteInterval()
+{
+    if (CSM431Bflags.isDelay50usForWrite)
+    {
+        CycleCounts.cycle50usForWriteCount = 0;
+        return;
+    }
+    else
+    {
+        CycleCounts.cycle50usForWriteCount++;
+        if (CycleCounts.cycle50usForWriteCount >= 50 / InterruptIntervalUS + 1)
+        {
+            CSM431Bflags.isDelay50usForWrite = _true;
+            CycleCounts.cycle50usForWriteCount = 0;
         }
 
         return;
@@ -1035,12 +979,17 @@ void TimeInterval()
 {
     CreateFrameInterval();
     CreateReadInterval();
-    CreateCfgResetInterval();
-    CreateRstLowInterval();
-    CreateObligationInterval();
-    CreateRstHighInterval();
-    CreateConfigCommandEndInterval();
+    CreateWriteInterval();        
+    CreateObligationInterval();  
     CreateChannelSwitchInterval();
+    if (_deviceState != _Busy && _deviceState != _Ready && _deviceState != Error)
+    {
+        CreateCfgResetInterval();
+        CreateRstHighInterval();
+        CreateRstLowInterval();
+        CreateConfigCommandEndInterval();
+    }   
+    
 }
 
 uint16_t C1188A(uint16_t* data, uint16_t len)
@@ -1095,7 +1044,7 @@ void ReadyToInitCSM431B()
 
 uint16_t InitCommand()
 {
-    if (_deviceState == Init)
+    if (_deviceState == _Init)
     {
         _deviceState = ReadyToCfgConfig;
         return NoError;
@@ -1108,9 +1057,13 @@ uint16_t InitCommand()
 
 uint16_t SendCommand(uint16_t count)
 {
-    if (_deviceState == Busy)
+    if (_deviceState == _Busy)
     {
-        CSM431Bflags.isSendCommandOn = _true;
+        if (_writeState == WriteFree)
+        {
+            WriteFrame1Counts.frame2ByteDivideIndex = 0;
+        }
+            CSM431Bflags.isSendCommandOn = _true;
         XintDivide++;
         if (XintDivide > 2)
         {
@@ -1118,11 +1071,12 @@ uint16_t SendCommand(uint16_t count)
         }
 
     }
-    else if (_deviceState ==  Ready)
+    else if (_deviceState ==  _Ready)
     {
         if (_writeState == WriteFree)
         {
-            _writeState = canChannel == SpiToCan1 ? WriteFrameHeadCan1 : WriteFrameHeadCan2;
+            _writeState =  WriteFrameHeadCan1;
+            _deviceState = _Busy;
             WriteFrame1Counts.frame2ByteDivideIndex = 0;
             WriteFrame2Counts.frame2ByteDivideIndex = 0;
             XintDivide++;
@@ -1132,7 +1086,7 @@ uint16_t SendCommand(uint16_t count)
             }
             return NoError;
         }
-        else if (_writeState == Init)
+        else if (_writeState == _Init)
         {
             return DeviceNotInited;
         }
@@ -1154,25 +1108,30 @@ uint16_t ReceiveCommand()
         return ErrorOccurred;
     }
     
-    if (_deviceState != Ready && _deviceState != Busy)
+    if (_deviceState != _Ready && _deviceState != _Busy)
     {
         return DeviceNotInited;
     }
     
-    if (_deviceState == Busy)
+    if (_readState == ReadFree)
     {
-        CSM431Bflags.isReceiveCommandOn = _true;
-        return CommandDelayed;
+        if (_deviceState == _Busy)
+        {
+            ReadDataFrameCounts.frame2ByteDivideIndex = 0;
+            ReadNumberFrameCounts.frame2ByteDivideIndex = 0;
+            CSM431Bflags.isReceiveCommandOn = _true;
+            return CommandDelayed;
+        }
+        else if (_deviceState == _Ready)
+        {
+            CSM431Bflags.isMosiNull = _false;
+            _readState = ReadNumber;
+            _deviceState = _Busy;
+            //ReceiveEvent();
+            return NoError;
+        }
     }
-    
-    if (_deviceState == Ready && _readState == ReadFree)
-    {
-        CSM431Bflags.isMosiNull = _false;
-        _readState = ReadNumber;
-        ReceiveEvent();
-        return NoError;
-    }
-    else if (_readState == Init)
+    else if (_readState == _Init)
     {
         return DeviceNotInited;
     }
@@ -1189,23 +1148,23 @@ uint16_t ReceiveCommand()
         return ErrorOccurred;
     }
 
-    if (_deviceState != Ready && _deviceState != Busy)
+    if (_deviceState != _Ready && _deviceState != _Busy)
     {
         return DeviceNotInited;
     }
 
-    if (_deviceState == Busy)
+    if (_deviceState == _Busy)
     {
         CSM431Bflags.isCheckErrorCommandOn = _true;
         return CommandDelayed;
     }
 
-    if (_deviceState == Ready && _errorFeedbackState == ErrorReadFree)
+    if (_deviceState == _Ready && _errorFeedbackState == ErrorReadFree)
     {
         _errorFeedbackState = ErrorReadCommand;
         return NoError;
     }
-    else if (_errorFeedbackState == Init)
+    else if (_errorFeedbackState == _Init)
     {
         return DeviceNotInited;
     }
@@ -1228,24 +1187,25 @@ uint16_t CheckIfCsm431BReady()
     }
     else
     {
-        return _deviceState == Ready ? _true : _false;
+        return _deviceState == _Ready ? _true : _false;
     }    
 }
 
 void IdelEvent(uint16_t sendData)
 {
-    CSM431BDeviceEvent();
-    ReceiveEvent();
+    OnErrorJudge(ErrorFeedbackData.receiveDataFrameData);
+    CSM431BDeviceEvent();    
     //CheckErrorFeedbackEvent();
     SendEvent(sendData);
+    ReceiveEvent();
     ReceiveDecode();
 }
 
 void ErrorResaet()
 {
-    _deviceState = Init;
-    _readState = Init;
-    _writeState = Init;
+    _deviceState = _Init;
+    _readState = _Init;
+    _writeState = _Init;
     CSM431Bflags.isErrorOccurred = _false;
 }
 
